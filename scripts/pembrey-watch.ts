@@ -15,7 +15,6 @@ const OUTPUT_FILE = resolve(
 );
 const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN ?? "";
 const TELEGRAM_CHAT_ID = process.env.TELEGRAM_CHAT_ID ?? "";
-const TELEGRAM_MESSAGE_THREAD_ID = process.env.TELEGRAM_MESSAGE_THREAD_ID ?? "";
 const TIDE_URL =
   process.env.TIDE_URL ??
   "https://www.tide-forecast.com/locations/Burry-Port/tides/latest";
@@ -649,10 +648,6 @@ async function sendTelegramMessage(message: string): Promise<void> {
     text: message,
     disable_web_page_preview: "true",
   });
-
-  if (TELEGRAM_MESSAGE_THREAD_ID) {
-    body.set("message_thread_id", TELEGRAM_MESSAGE_THREAD_ID);
-  }
 
   const response = await fetch(
     `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`,
