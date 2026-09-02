@@ -1,0 +1,211 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Pembrey Sands Tactical Landing Alert</title>
+    <style>
+      :root {
+        --bg: #f3f4f6;
+        --panel: #ffffff;
+        --ink: #172033;
+        --muted: #4b5563;
+        --line: #dfe3ea;
+        --accent: #0f172a;
+        --soft: #ecfdf5;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        background: linear-gradient(180deg, #eef2ff 0%, var(--bg) 100%);
+        color: var(--ink);
+        font-family: Arial, Helvetica, sans-serif;
+        min-height: 100vh;
+        display: grid;
+        place-items: center;
+        padding: 24px;
+      }
+
+      .email {
+        width: min(760px, 100%);
+        background: var(--panel);
+        border: 1px solid var(--line);
+        box-shadow: 0 14px 30px rgba(15, 23, 42, 0.08);
+        border-radius: 14px;
+        overflow: hidden;
+      }
+
+      .header {
+        background: var(--accent);
+        color: white;
+        padding: 20px 24px;
+        font-size: clamp(1.3rem, 2.1vw, 2rem);
+        font-weight: 700;
+        letter-spacing: 0.02em;
+      }
+
+      .body {
+        padding: 22px 24px 28px;
+      }
+
+      .meta {
+        display: grid;
+        gap: 8px;
+        margin-bottom: 20px;
+        color: var(--muted);
+        font-size: 0.98rem;
+      }
+
+      .meta strong {
+        color: var(--ink);
+      }
+
+      .section {
+        border-top: 1px solid var(--line);
+        padding-top: 18px;
+        margin-top: 18px;
+      }
+
+      h2 {
+        margin: 0 0 12px;
+        font-size: 1rem;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+        color: var(--muted);
+      }
+
+      .summary {
+        line-height: 1.6;
+        margin: 0;
+        font-size: 1rem;
+      }
+
+      pre {
+        white-space: pre-wrap;
+        word-break: break-word;
+        background: #f8fafc;
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        padding: 16px;
+        margin: 0;
+        font-family:
+          "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+        color: var(--ink);
+        font-size: 0.85rem;
+      }
+
+      .badge {
+        display: inline-block;
+        background: var(--soft);
+        color: #166534;
+        border: 1px solid #bbf7d0;
+        border-radius: 999px;
+        padding: 6px 10px;
+        font-size: 0.76rem;
+        font-weight: 700;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+      }
+    </style>
+  </head>
+  <body>
+    <main class="email">
+      <div class="header">Pembrey Sands tactical landing alert</div>
+      <div class="body">
+        <div class="meta">
+          <div>
+            <span class="badge">Site</span>
+            <strong id="location">Pembrey Sands</strong>
+          </div>
+          <div>Timing: <span id="timing">Waiting for data…</span></div>
+          <div>Altitude: <span id="altitude">—</span></div>
+          <div>Tide guidance: <span id="tide">—</span></div>
+        </div>
+
+        <div class="section">
+          <h2>Summary</h2>
+          <p class="summary" id="summary">
+            Loading the latest Pembrey NOTAM alert…
+          </p>
+        </div>
+
+        <div class="section">
+          <h2>Raw NOTAM</h2>
+          <pre id="raw">No alert data loaded yet.</pre>
+        </div>
+      </div>
+    </main>
+
+    <script>
+      const fallback = {
+        location: "Pembrey Sands",
+        timing: "Not available yet",
+        altitude: "? to ? ft",
+        tide: "The system is waiting for the next feed update.",
+        summary:
+          "No new Pembrey-related NOTAMs have been recorded yet. The watcher will refresh on the next scheduled check.",
+        raw: "No raw NOTAM is available at the moment.",
+      };
+
+      function formatWindow(item) {
+        const from = item.effectiveFrom || "published start";
+        const to = item.effectiveTo || "published end";
+        return `${from} to ${to}`;
+      }
+
+      function displayAlert(item) {
+        const location = item.location || "Pembrey Sands";
+        const timing = formatWindow(item);
+        const altitude = `${item.lowerLimit || "?"} to ${item.upperLimit || "?"} ft`;
+        const tide =
+          item.tideEstimate?.summary ||
+          "Not enough data to estimate a precise tide window.";
+        const summary =
+          item.aiSummary || "No AI summary was generated for this alert.";
+
+        document.getElementById("location").textContent = location;
+        document.getElementById("timing").textContent = timing;
+        document.getElementById("altitude").textContent = altitude;
+        document.getElementById("tide").textContent = tide;
+        document.getElementById("summary").textContent = summary;
+        document.getElementById("raw").textContent =
+          item.rawText || "No raw NOTAM text available.";
+      }
+
+      async function loadLatestAlert() {
+        try {
+          const response = await fetch("./data/pembrey-notam.json", {
+            cache: "no-store",
+          });
+
+          if (!response.ok) {
+            throw new Error("Data not found");
+          }
+
+          const data = await response.json();
+          const item = data.notams && data.notams[0];
+
+          if (item) {
+            displayAlert(item);
+            return;
+          }
+        } catch (error) {
+          console.warn("Could not load latest NOTAM data:", error);
+        }
+
+        document.getElementById("location").textContent = fallback.location;
+        document.getElementById("timing").textContent = fallback.timing;
+        document.getElementById("altitude").textContent = fallback.altitude;
+        document.getElementById("tide").textContent = fallback.tide;
+        document.getElementById("summary").textContent = fallback.summary;
+        document.getElementById("raw").textContent = fallback.raw;
+      }
+
+      loadLatestAlert();
+    </script>
+  </body>
+</html>
