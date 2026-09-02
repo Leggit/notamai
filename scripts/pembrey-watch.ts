@@ -1,6 +1,7 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { existsSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 
 const NOTAM_URL =
   process.env.NOTAM_URL ??
@@ -88,6 +89,7 @@ async function main() {
     state.processedValidityDates.includes(sourceValidityDate)
   ) {
     state.lastCheckedAt = new Date().toISOString();
+    await writeOutput([]);
     await writeFile(STATE_FILE, JSON.stringify(state, null, 2), "utf8");
     await sendStatusAlert(
       `Pembrey watch ran: no new NOTAM data. Dataset validity date ${sourceValidityDate} was already processed.`,
@@ -103,6 +105,7 @@ async function main() {
 
   if (matches.length === 0) {
     state.lastCheckedAt = new Date().toISOString();
+    await writeOutput([]);
     if (sourceValidityDate) {
       state.processedValidityDates = addUniqueDate(
         state.processedValidityDates,
@@ -125,6 +128,7 @@ async function main() {
 
   if (newMatches.length === 0) {
     state.lastCheckedAt = new Date().toISOString();
+    await writeOutput([]);
     if (sourceValidityDate) {
       state.processedValidityDates = addUniqueDate(
         state.processedValidityDates,
@@ -155,12 +159,7 @@ async function main() {
     }),
   );
 
-  const output = {
-    generatedAt: new Date().toISOString(),
-    notams: enriched,
-  };
-
-  await writeFile(OUTPUT_FILE, JSON.stringify(output, null, 2), "utf8");
+  await writeOutput(enriched);
 
   for (const item of enriched) {
     await sendAlert(item);
@@ -521,6 +520,21 @@ async function ensureFileStorage() {
   await mkdir(dirname(OUTPUT_FILE), { recursive: true });
 }
 
+async function writeOutput(notams: unknown[]) {
+  await writeFile(
+    OUTPUT_FILE,
+    JSON.stringify(
+      {
+        generatedAt: new Date().toISOString(),
+        notams,
+      },
+      null,
+      2,
+    ),
+    "utf8",
+  );
+}
+
 async function estimateTideWindow(notam: ParsedNotam): Promise<TideEstimate> {
   try {
     const response = await fetch(TIDE_URL, {
@@ -696,7 +710,7 @@ function formatDate(value: string): string {
 
 if (
   process.argv[1] &&
-  resolve(process.argv[1]) === resolve(new URL(import.meta.url).pathname)
+  resolve(process.argv[1]) === resolve(fileURLToPath(import.meta.url))
 ) {
   main().catch(async (error) => {
     console.error("Pembrey watch failed:", error);
