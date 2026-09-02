@@ -1,30 +1,86 @@
-name: Check NOTAMs
+name: Update NOTAM data and publish map
 
 on:
   workflow_dispatch: {}
+  schedule:
+    - cron: "0 6 * * *"
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
 
 jobs:
-  run:
+  update-data:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Check out repository
+        uses: actions/checkout@v4
 
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: "20"
+          cache: npm
 
       - name: Install dependencies
         run: npm ci
 
-      - name: Run check-notams
+      - name: Generate latest NOTAM JSON
         env:
           OUTPUT_FILE: data/notams.json
         run: npm run check-notams
 
-      - name: Upload notams.json
-        uses: actions/upload-artifact@v4
+      - name: Commit updated data
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data/notams.json
+          if git diff --cached --quiet; then
+            echo "No NOTAM data changes to commit."
+          else
+            git commit -m "Update NOTAM data"
+            git push
+          fi
+
+  build-site:
+    needs: update-data
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
         with:
-          name: notams
-          path: data/notams.json
+          ref: main
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build static site
+        env:
+          NEXT_PUBLIC_BASE_PATH: /${{ github.event.repository.name }}
+        run: npm run build
+
+      - name: Upload site artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: ./out
+
+  deploy:
+    needs: build-site
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
