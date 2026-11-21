@@ -1,11 +1,12 @@
+import AdmZip from "adm-zip";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
-const NOTAM_URL =
-  process.env.NOTAM_URL ??
-  "https://nats-uk.ead-it.com/cms-nats/export/sites/default/en/Publications/digital-datasets/UAS_AREA_1/EG_UAS_FR_DS_AREA1_FULL_20260903_XML.zip";
+const DIGITAL_DATASETS_URL =
+  "https://nats-uk.ead-it.com/cms-nats/opencms/en/Publications/digital-datasets/";
+const NOTAM_URL = process.env.NOTAM_URL;
 
 const STATE_FILE = resolve(
   process.env.STATE_FILE ?? "./data/pembrey-state.json",
@@ -79,8 +80,12 @@ export interface TideEvent {
 async function main() {
   await ensureFileStorage();
 
-  const xml = await fetchNotamFeed();
-  const sourceValidityDate = extractFeedValidityDate(xml, NOTAM_URL);
+  const dataset: { url: string; effectiveFrom?: string } = NOTAM_URL
+    ? { url: NOTAM_URL }
+    : await findLatestUasDataset();
+  const xml = await fetchNotamFeed(dataset.url);
+  const sourceValidityDate =
+    dataset.effectiveFrom ?? extractFeedValidityDate(xml, dataset.url);
   const state = await loadState();
 
   if (
@@ -334,9 +339,124 @@ export function buildEmailText(item: {
   ].join("\n");
 }
 
-async function fetchNotamFeed(): Promise<string> {
-  if (NOTAM_URL.startsWith("http://") || NOTAM_URL.startsWith("https://")) {
-    const response = await fetch(NOTAM_URL, {
+async function findLatestUasDataset(): Promise<{
+  url: string;
+  effectiveFrom: string;
+}> {
+  const response = await fetch(DIGITAL_DATASETS_URL, {
+    headers: {
+      "User-Agent": "Pembrey-Spotter-Watcher/0.1",
+      Accept: "text/html",
+    },
+  });
+  if (!response.ok) {
+    throw new Error(
+      `Failed to fetch NATS digital datasets page: ${response.status}`,
+    );
+  }
+
+  const html = await response.text();
+  const tables = Array.from(
+    html.matchAll(/<table\b([^>]*)>([\s\S]*?)<\/table>/gi),
+  );
+  const table = tables.find((match) =>
+    /\bid\s*=\s*(["'])regularDatasetsTable\1/i.test(match[1]),
+  );
+  if (!table) {
+    throw new Error("NATS regular datasets table was not found.");
+  }
+
+  const rows = Array.from(table[2].matchAll(/<tr\b[^>]*>([\s\S]*?)<\/tr>/gi));
+  const headerCells = extractTableCells(rows[0]?.[1] ?? "");
+  const uasRow = rows
+    .slice(1)
+    .map((row) => extractTableCells(row[1]))
+    .find(
+      (cells) =>
+        stripHtml(cells[0] ?? "").toLowerCase() === "uas flight restrictions",
+    );
+  if (!uasRow) {
+    throw new Error(
+      "UAS Flight Restrictions row was not found in the NATS table.",
+    );
+  }
+
+  const candidates: Array<{ url: string; effectiveFrom: string }> = [];
+  for (let column = 2; column < headerCells.length; column += 1) {
+    const header = stripHtml(headerCells[column]);
+    const effectiveFrom = parseDayFirstDate(header);
+    if (!/effective\s+from/i.test(header) || !effectiveFrom) continue;
+
+    const xmlHref = Array.from(
+      (uasRow[column] ?? "").matchAll(/\bhref\s*=\s*(["'])(.*?)\1/gi),
+    )
+      .map((match) => match[2].replace(/&amp;/gi, "&"))
+      .find((href) => /(?:_xml\.zip|\.xml(?:\.zip)?)(?:[?#]|$)/i.test(href));
+    if (xmlHref) {
+      candidates.push({
+        url: new URL(xmlHref, DIGITAL_DATASETS_URL).toString(),
+        effectiveFrom,
+      });
+    }
+  }
+
+  candidates.sort((left, right) =>
+    left.effectiveFrom.localeCompare(right.effectiveFrom),
+  );
+  const today = new Date().toISOString().slice(0, 10);
+  const latest =
+    candidates.filter((candidate) => candidate.effectiveFrom <= today).at(-1) ??
+    candidates[0];
+  if (!latest) {
+    throw new Error(
+      "No dated XML download was found for UAS Flight Restrictions.",
+    );
+  }
+  return latest;
+}
+
+function extractTableCells(row: string): string[] {
+  return Array.from(row.matchAll(/<t[dh]\b[^>]*>([\s\S]*?)<\/t[dh]>/gi)).map(
+    (cell) => cell[1],
+  );
+}
+
+function stripHtml(value: string): string {
+  return value
+    .replace(/<[^>]+>/g, " ")
+    .replace(/&nbsp;|&#160;/gi, " ")
+    .replace(/&amp;/gi, "&")
+    .replace(/&lt;/gi, "<")
+    .replace(/&gt;/gi, ">")
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;|&apos;/gi, "'")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function parseDayFirstDate(value: string): string | undefined {
+  const match = value.match(/\b(\d{1,2})\/(\d{1,2})\/(\d{4})\b/);
+  if (!match) return undefined;
+
+  const day = Number(match[1]);
+  const month = Number(match[2]);
+  const year = Number(match[3]);
+  const date = new Date(Date.UTC(year, month - 1, day));
+  if (
+    date.getUTCFullYear() !== year ||
+    date.getUTCMonth() !== month - 1 ||
+    date.getUTCDate() !== day
+  ) {
+    return undefined;
+  }
+
+  return `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+}
+
+async function fetchNotamFeed(sourceUrl: string): Promise<string> {
+  let data: Buffer;
+  if (sourceUrl.startsWith("http://") || sourceUrl.startsWith("https://")) {
+    const response = await fetch(sourceUrl, {
       headers: {
         "User-Agent": "Pembrey-Spotter-Watcher/0.1",
         Accept: "application/xml,text/xml,text/plain,*/*",
@@ -346,11 +466,26 @@ async function fetchNotamFeed(): Promise<string> {
     if (!response.ok) {
       throw new Error(`Failed to fetch NOTAM feed: ${response.status}`);
     }
-
-    return response.text();
+    data = Buffer.from(await response.arrayBuffer());
+  } else {
+    data = await readFile(sourceUrl);
   }
 
-  return readFile(NOTAM_URL, "utf8");
+  if (
+    sourceUrl.toLowerCase().endsWith(".zip") ||
+    (data[0] === 0x50 && data[1] === 0x4b)
+  ) {
+    const archive = new AdmZip(data);
+    const xmlEntry = archive
+      .getEntries()
+      .find((entry) => !entry.isDirectory && /\.xml$/i.test(entry.entryName));
+    if (!xmlEntry) {
+      throw new Error(`NOTAM archive contains no XML file: ${sourceUrl}`);
+    }
+    return archive.readAsText(xmlEntry, "utf8");
+  }
+
+  return data.toString("utf8");
 }
 
 function parseNotams(xml: string): ParsedNotam[] {

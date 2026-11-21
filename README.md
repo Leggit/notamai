@@ -5,6 +5,7 @@ This project is now focused on a single use case: monitoring UK NOTAM data for P
 ## What it does
 
 - downloads the latest NOTAM feed
+- discovers the currently effective UAS Flight Restrictions XML dataset and effective date from the NATS digital datasets table
 - filters for Pembrey-related notices
 - ignores already-seen items using a local state file
 - extracts the relevant time/altitude information from the NOTAM text
@@ -23,7 +24,7 @@ npm run pembrey-watch
 ```bash
 OPENAI_API_KEY=
 OPENAI_MODEL=gpt-4o-mini
-NOTAM_URL=
+NOTAM_URL= # Optional override; by default the latest UAS dataset is discovered from NATS
 STATE_FILE=./data/pembrey-state.json
 OUTPUT_FILE=./data/pembrey-notam.json
 TELEGRAM_BOT_TOKEN=
